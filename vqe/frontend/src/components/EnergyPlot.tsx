@@ -1,7 +1,7 @@
 import React from "react";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
-  ReferenceLine, ResponsiveContainer, Dot,
+  ReferenceLine, ResponsiveContainer,
 } from "recharts";
 import type { VQEIteration } from "../types";
 
@@ -11,39 +11,6 @@ interface Props {
   groundTruth?: number;
   units: string;
 }
-
-const CustomDot = (currentIdx: number) =>
-  // eslint-disable-next-line react/display-name
-  (props: { cx?: number; cy?: number; index?: number }) => {
-    const { cx, cy, index } = props;
-    if (cx == null || cy == null) return null;
-    if (index === currentIdx) {
-      return (
-        <g>
-          <circle cx={cx} cy={cy} r={7} fill="#7c3aed" stroke="#c4b5fd" strokeWidth={2} />
-          <circle cx={cx} cy={cy} r={3} fill="#e9d5ff" />
-        </g>
-      );
-    }
-    if (index! < currentIdx) {
-      return <circle cx={cx} cy={cy} r={2.5} fill="#6366f1" opacity={0.6} />;
-    }
-    return null;
-  };
-
-const CustomTooltip = ({ active, payload, label, units }: {
-  active?: boolean; payload?: { value: number }[]; label?: number; units: string;
-}) => {
-  if (!active || !payload?.length) return null;
-  return (
-    <div className="bg-q-700 border border-q-500 rounded-lg px-3 py-2 text-xs">
-      <p className="text-slate-400">Iteration {label}</p>
-      <p className="text-violet-300 font-mono font-semibold">
-        E = {payload[0].value.toFixed(5)} {units}
-      </p>
-    </div>
-  );
-};
 
 export default function EnergyPlot({ iterations, currentIdx, groundTruth, units }: Props) {
   const visible = iterations.slice(0, currentIdx + 1);
@@ -70,7 +37,20 @@ export default function EnergyPlot({ iterations, currentIdx, groundTruth, units 
           tickFormatter={(v: number) => v.toFixed(2)}
           width={52}
         />
-        <Tooltip content={<CustomTooltip units={units} />} />
+        {/* Inline tooltip to avoid Recharts overload on typed content prop */}
+        <Tooltip
+          content={({ active, payload, label }: any) => {
+            if (!active || !payload?.length) return null;
+            return (
+              <div style={{ background: "#0f1629", border: "1px solid #2a3f5f", borderRadius: 8, padding: "6px 10px", fontSize: 12 }}>
+                <p style={{ color: "#94a3b8" }}>Iteration {label}</p>
+                <p style={{ color: "#c4b5fd", fontFamily: "monospace", fontWeight: 600 }}>
+                  E = {Number(payload[0].value).toFixed(5)} {units}
+                </p>
+              </div>
+            );
+          }}
+        />
         {groundTruth !== undefined && (
           <ReferenceLine
             y={groundTruth}
@@ -85,7 +65,19 @@ export default function EnergyPlot({ iterations, currentIdx, groundTruth, units 
           dataKey="energy"
           stroke="#6366f1"
           strokeWidth={2}
-          dot={CustomDot(currentIdx)}
+          /* Use any to bypass strict Recharts dot prop overloads */
+          dot={((props: any) => {
+            const { cx, cy, index } = props;
+            if (cx == null || cy == null) return null;
+            if (index === currentIdx) return (
+              <g key={index}>
+                <circle cx={cx} cy={cy} r={7} fill="#7c3aed" stroke="#c4b5fd" strokeWidth={2} />
+                <circle cx={cx} cy={cy} r={3} fill="#e9d5ff" />
+              </g>
+            );
+            if (index < currentIdx) return <circle key={index} cx={cx} cy={cy} r={2.5} fill="#6366f1" opacity={0.6} />;
+            return <g key={index} />;
+          }) as any}
           activeDot={false}
           isAnimationActive={false}
         />

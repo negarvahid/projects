@@ -27,6 +27,7 @@ export interface VQEResult {
   converged: boolean;
   n_gates: number;
   param_names: string[];
+  optimizer: string;
 }
 
 export interface AnsatzCheckResult {
