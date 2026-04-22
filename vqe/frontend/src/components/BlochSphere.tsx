@@ -6,7 +6,7 @@ const CY = 68;
 const W = 136;
 const H = 136;
 
-// Projection: isometric-ish — x to bottom-right, y into screen, z up
+// Projection: isometric-ish: x to bottom-right, y into screen, z up
 function proj(x: number, y: number, z: number): [number, number] {
   const a = Math.PI / 5.5; // ~32.7°
   const sx = CX + R * (x * Math.cos(a) - y * Math.sin(a));

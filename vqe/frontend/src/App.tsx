@@ -13,7 +13,7 @@ export default function App() {
           </div>
           <div>
             <h1 className="text-base font-bold text-white leading-none">VQE Explorer</h1>
-            <p className="text-xs text-slate-500 mt-0.5">Variational Quantum Eigensolver — Interactive Visualizer</p>
+            <p className="text-xs text-slate-500 mt-0.5">Variational Quantum Eigensolver | Interactive Visualizer</p>
           </div>
         </div>
       </header>

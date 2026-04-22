@@ -158,7 +158,7 @@ export default function VQEVisualizer() {
   const prevEnergy = currentIdx > 0 ? result?.iterations[currentIdx - 1].energy : null;
   const deltaE = iter && prevEnergy !== null ? iter.energy - prevEnergy! : null;
 
-  // Group hamiltonians by category (exclude "custom" — rendered separately)
+  // Group hamiltonians by category (exclude "custom", rendered separately)
   const hamByCategory = Object.entries(hamiltonians).reduce<Record<string, [string, HamiltonianMeta][]>>(
     (acc, [k, v]) => {
       if (k === "custom") return acc;
@@ -176,7 +176,7 @@ export default function VQEVisualizer() {
         </h2>
 
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          {/* Hamiltonian — grouped by category */}
+          {/* Hamiltonian, grouped by category */}
           <div>
             <label className="label">Hamiltonian</label>
             <select className="select-field" value={selectedHam} onChange={(e) => setSelectedHam(e.target.value)}>
@@ -220,7 +220,7 @@ export default function VQEVisualizer() {
         {/* Custom Hamiltonian input */}
         {selectedHam === "custom" && (
           <div className="mt-4 animate-fade-in">
-            <label className="label">Pauli Operators — one per line: &lt;coeff&gt; &lt;PAULI&gt;</label>
+            <label className="label">Pauli Operators, one per line: &lt;coeff&gt; &lt;PAULI&gt;</label>
             <textarea
               className="select-field h-32 resize-y font-mono text-xs"
               value={customHamText}
@@ -361,7 +361,7 @@ export default function VQEVisualizer() {
             <div className="grid grid-cols-1 xl:grid-cols-5 gap-4">
               {visiblePanels.circuit && (
                 <div className={`card ${visiblePanels.bloch ? "xl:col-span-3" : "xl:col-span-5"}`}>
-                  <p className="label mb-3">Quantum Circuit — iteration {currentIdx}</p>
+                  <p className="label mb-3">Quantum Circuit, iteration {currentIdx}</p>
                   <CircuitDiagram gates={iter.gates} nQubits={result.n_qubits} nCols={iter.n_cols} />
                 </div>
               )}
