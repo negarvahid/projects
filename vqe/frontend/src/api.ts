@@ -2,7 +2,7 @@ import type { VQEResult, AnsatzCheckResult, HamiltonianInfo, AnsatzInfo } from "
 
 // In production (GitHub Pages), set VITE_API_URL to your Render backend URL.
 // In dev, Vite proxies /api → localhost:8000 so BASE = "/api" works.
-const BASE = (import.meta.env.VITE_API_URL ?? "") + "/api";
+const BASE = (import.meta.env.VITE_API_URL ?? "").replace(/\/$/, "") + "/api";
 
 async function post<T>(path: string, body: unknown): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
