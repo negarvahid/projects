@@ -1,0 +1,65 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: vqe/frontend/package-lock.json
+
+      - name: Install VQE frontend dependencies
+        run: npm ci
+        working-directory: vqe/frontend
+
+      - name: Build VQE frontend
+        run: npm run build
+        working-directory: vqe/frontend
+        env:
+          # Your Render backend URL — set in repo Settings → Secrets → Actions
+          VITE_API_URL: ${{ secrets.VITE_API_URL }}
+          # Serve the app from /vqe/ on the subdomain
+          VITE_BASE_PATH: /vqe
+
+      - name: Assemble site
+        run: |
+          mkdir -p _site/vqe
+          # Landing page at root
+          cp index.html _site/index.html
+          cp CNAME _site/CNAME
+          # VQE app in /vqe/
+          cp -r vqe/frontend/dist/. _site/vqe/
+          # SPA fallback so /vqe/* deep-links work
+          cp _site/vqe/index.html _site/vqe/404.html
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: vqe-backend
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: ANTHROPIC_API_KEY
+        sync: false          # set manually in Render dashboard
+      - key: FRONTEND_URL
+        sync: false          # e.g. https://yourusername.github.io
+    healthCheckPath: /api/hamiltonians

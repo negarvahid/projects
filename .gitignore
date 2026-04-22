@@ -1,0 +1,7 @@
+_site/
+vqe/frontend/node_modules/
+vqe/frontend/dist/
+vqe/backend/__pycache__/
+vqe/backend/*.pyc
+vqe/backend/.env
+.DS_Store
