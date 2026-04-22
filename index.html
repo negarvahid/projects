@@ -242,6 +242,9 @@
 
     .tag-quantum  { background: rgba(124,58,237,0.2); color: #c4b5fd; border: 1px solid rgba(124,58,237,0.3); }
     .tag-react    { background: rgba(6,182,212,0.15); color: #67e8f9; border: 1px solid rgba(6,182,212,0.25); }
+    .tag-streamlit{ background: rgba(255,75,75,0.12); color: #fca5a5; border: 1px solid rgba(255,75,75,0.25); }
+    .tag-xai      { background: rgba(251,191,36,0.12); color: #fde68a; border: 1px solid rgba(251,191,36,0.25); }
+    .tag-struct   { background: rgba(52,211,153,0.12); color: #6ee7b7; border: 1px solid rgba(52,211,153,0.25); }
     .tag-python   { background: rgba(59,130,246,0.15); color: #93c5fd; border: 1px solid rgba(59,130,246,0.25); }
     .tag-ml       { background: rgba(16,185,129,0.15); color: #6ee7b7; border: 1px solid rgba(16,185,129,0.25); }
     .tag-physics  { background: rgba(245,158,11,0.15); color: #fde68a; border: 1px solid rgba(245,158,11,0.25); }
@@ -364,7 +367,7 @@
   <section class="grid-section">
     <div class="section-meta">
       <h2>All Projects</h2>
-      <span class="count">1 live · more coming</span>
+      <span class="count">2 live · more coming</span>
     </div>
 
     <div class="projects-grid">
@@ -441,14 +444,71 @@
         </div>
       </div>
 
-      <!-- Coming soon cards -->
-      <div class="card card-soon">
-        <div class="card-soon-inner">
-          <div class="soon-icon">⚛</div>
-          <p>More projects coming soon</p>
+      <!-- XAI for Structural Walls -->
+      <div class="card" style="animation-delay:0.12s">
+        <div class="card-thumb" style="background: linear-gradient(135deg, #0a1a0f 0%, #0f2d1a 50%, #162412 100%);">
+          <svg width="260" height="90" viewBox="0 0 260 90" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <!-- Feature importance bars -->
+            <text x="14" y="18" fill="#4ade80" font-size="7" font-family="monospace" opacity="0.7">feature importance</text>
+            <!-- Bar labels -->
+            <text x="14" y="34" fill="#6b7280" font-size="7" font-family="monospace">hw/lw</text>
+            <text x="14" y="48" fill="#6b7280" font-size="7" font-family="monospace">ρl</text>
+            <text x="14" y="62" fill="#6b7280" font-size="7" font-family="monospace">f′c</text>
+            <text x="14" y="76" fill="#6b7280" font-size="7" font-family="monospace">Ag</text>
+            <!-- Bars RF (green) -->
+            <rect x="44" y="27" width="72" height="9" rx="2" fill="#10b981" opacity="0.85"/>
+            <rect x="44" y="41" width="50" height="9" rx="2" fill="#10b981" opacity="0.7"/>
+            <rect x="44" y="55" width="38" height="9" rx="2" fill="#10b981" opacity="0.55"/>
+            <rect x="44" y="69" width="28" height="9" rx="2" fill="#10b981" opacity="0.4"/>
+            <!-- Bars XGB (amber) -->
+            <rect x="44" y="27" width="0" height="0"/>
+            <!-- Model legend -->
+            <rect x="130" y="27" width="8" height="8" rx="1" fill="#10b981"/>
+            <text x="142" y="34" fill="#6b7280" font-size="7" font-family="monospace">RF</text>
+            <rect x="130" y="40" width="8" height="8" rx="1" fill="#f59e0b"/>
+            <text x="142" y="47" fill="#6b7280" font-size="7" font-family="monospace">XGB</text>
+            <rect x="130" y="53" width="8" height="8" rx="1" fill="#818cf8"/>
+            <text x="142" y="60" fill="#6b7280" font-size="7" font-family="monospace">NAM</text>
+            <rect x="130" y="66" width="8" height="8" rx="1" fill="#f472b6"/>
+            <text x="142" y="73" fill="#6b7280" font-size="7" font-family="monospace">EBM</text>
+            <!-- R² scores panel -->
+            <rect x="170" y="20" width="78" height="58" rx="6" fill="rgba(16,185,129,0.06)" stroke="rgba(16,185,129,0.2)" stroke-width="1"/>
+            <text x="209" y="33" fill="#34d399" font-size="7" text-anchor="middle" font-family="monospace">R² scores</text>
+            <text x="209" y="46" fill="#10b981" font-size="11" text-anchor="middle" font-family="monospace" font-weight="600">0.94</text>
+            <text x="209" y="57" fill="#6b7280" font-size="7" text-anchor="middle" font-family="monospace">Random Forest</text>
+            <line x1="178" y1="63" x2="240" y2="63" stroke="rgba(16,185,129,0.15)" stroke-width="1"/>
+            <text x="193" y="72" fill="#f59e0b" font-size="8" font-family="monospace" font-weight="500">0.92</text>
+            <text x="215" y="72" fill="#818cf8" font-size="8" font-family="monospace" font-weight="500">0.89</text>
+          </svg>
+        </div>
+        <div class="card-body">
+          <div class="card-title">XAI for Structural Walls</div>
+          <p class="card-desc">
+            Interpretable ML for predicting reinforced concrete wall shear capacity.
+            Compares Random Forest, XGBoost, NAM, and EBM side-by-side with full
+            explainability — feature importance, PDPs, and model-specific interpretability plots.
+          </p>
+          <div class="card-tags">
+            <span class="tag tag-xai">XAI</span>
+            <span class="tag tag-ml">ML</span>
+            <span class="tag tag-struct">Structural Eng</span>
+            <span class="tag tag-python">Python</span>
+            <span class="tag tag-streamlit">Streamlit</span>
+          </div>
+          <div class="card-links">
+            <a href="https://xai-for-structure-walls.streamlit.app/" class="btn btn-primary" target="_blank" rel="noopener">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+              Open App
+            </a>
+            <a href="https://github.com/negarvahid/xai-for-structure-walls" class="btn btn-ghost" target="_blank" rel="noopener">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/></svg>
+              GitHub
+            </a>
+          </div>
         </div>
       </div>
 
+      <!-- Coming soon -->
       <div class="card card-soon">
         <div class="card-soon-inner">
           <div class="soon-icon">∫</div>
