@@ -52,6 +52,7 @@ export interface HamiltonianInfo {
   name: string;
   description: string;
   n_qubits: number;
+  supports_encoding?: boolean;
 }
 
 export interface AnsatzInfo {

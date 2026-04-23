@@ -5,11 +5,101 @@ from qiskit.circuit import ParameterVector
 from scipy.optimize import minimize
 from typing import List, Dict, Tuple, Optional, Any
 
+# Pre-computed qubit Hamiltonians for molecular systems under each fermionic encoding.
+# Generated via PySCF + qiskit-nature at STO-3G equilibrium geometries.
+# H2: r=0.735 Ang, full space (4 spin-orbitals)
+# LiH: r=1.5949 Ang, active space (2e, 2 spatial orbitals)
+MOLECULAR_ENCODINGS: Dict[str, Dict[str, Dict]] = {
+    "h2": {
+        "jw": {
+            "n_qubits": 4,
+            "ground_truth": -1.1373,
+            "pauli_list": [
+                (-0.090579, "IIII"), (0.172184, "IIIZ"), (-0.225753, "IIZI"),
+                (0.120913, "IIZZ"), (0.172184, "IZII"), (0.168928, "IZIZ"),
+                (-0.225753, "ZIII"), (0.166145, "ZIIZ"), (0.045233, "YYYY"),
+                (0.045233, "XXYY"), (0.045233, "YYXX"), (0.045233, "XXXX"),
+                (0.166145, "IZZI"), (0.174643, "ZIZI"), (0.120913, "ZZII"),
+            ],
+        },
+        "bk": {
+            "n_qubits": 4,
+            "ground_truth": -1.1373,
+            "pauli_list": [
+                (-0.090579, "IIII"), (0.172184, "IIIZ"), (-0.225753, "IIZZ"),
+                (0.120913, "IIZI"), (0.172184, "IZII"), (0.168928, "IZIZ"),
+                (-0.225753, "ZZZI"), (0.166145, "ZZZZ"), (0.045233, "ZXIX"),
+                (-0.045233, "IXZX"), (-0.045233, "ZXZX"), (0.045233, "IXIX"),
+                (0.166145, "IZZZ"), (0.174643, "ZZIZ"), (0.120913, "ZIZI"),
+            ],
+        },
+        "parity": {
+            "n_qubits": 4,
+            "ground_truth": -1.1373,
+            "pauli_list": [
+                (-0.090579, "IIII"), (0.172184, "IIIZ"), (-0.225753, "IIZZ"),
+                (0.120913, "IIZI"), (0.172184, "IZZI"), (0.168928, "IZZZ"),
+                (-0.225753, "ZZII"), (0.166145, "ZZIZ"), (0.045233, "ZXIX"),
+                (-0.045233, "IXZX"), (-0.045233, "ZXZX"), (0.045233, "IXIX"),
+                (0.166145, "IZIZ"), (0.174643, "ZZZZ"), (0.120913, "ZIZI"),
+            ],
+        },
+    },
+    "lih": {
+        "jw": {
+            "n_qubits": 4,
+            "ground_truth": -0.064,
+            "pauli_list": [
+                (0.289423, "IIII"), (0.156144, "IIIZ"), (-0.01499, "IIZI"),
+                (0.052686, "IIZZ"), (0.156144, "IZII"), (0.121916, "IZIZ"),
+                (0.013978, "YYII"), (0.012123, "YYIZ"), (0.013978, "XXII"),
+                (0.012123, "XXIZ"), (-0.01499, "ZIII"), (0.055939, "ZIIZ"),
+                (0.013978, "IIYY"), (0.012123, "IZYY"), (0.013978, "IIXX"),
+                (0.012123, "IZXX"), (0.003253, "YYYY"), (0.003253, "XXYY"),
+                (0.003253, "YYXX"), (0.003253, "XXXX"), (-0.001854, "ZIYY"),
+                (-0.001854, "ZIXX"), (0.055939, "IZZI"), (-0.001854, "YYZI"),
+                (-0.001854, "XXZI"), (0.084484, "ZIZI"), (0.052686, "ZZII"),
+            ],
+        },
+        "bk": {
+            "n_qubits": 4,
+            "ground_truth": -0.064,
+            "pauli_list": [
+                (0.289423, "IIII"), (0.156144, "IIIZ"), (-0.01499, "IIZZ"),
+                (0.052686, "IIZI"), (0.156144, "IZII"), (0.121916, "IZIZ"),
+                (-0.013978, "ZXZI"), (-0.012123, "ZXZZ"), (0.013978, "IXII"),
+                (0.012123, "IXIZ"), (-0.01499, "ZZZI"), (0.055939, "ZZZZ"),
+                (-0.013978, "IIZX"), (-0.012123, "IZZX"), (0.013978, "IIIX"),
+                (0.012123, "IZIX"), (0.003253, "ZXIX"), (-0.003253, "IXZX"),
+                (-0.003253, "ZXZX"), (0.003253, "IXIX"), (0.001854, "ZZIX"),
+                (-0.001854, "ZZZX"), (0.055939, "IZZZ"), (0.001854, "ZXIZ"),
+                (-0.001854, "IXZZ"), (0.084484, "ZZIZ"), (0.052686, "ZIZI"),
+            ],
+        },
+        "parity": {
+            "n_qubits": 4,
+            "ground_truth": -0.064,
+            "pauli_list": [
+                (0.289423, "IIII"), (0.156144, "IIIZ"), (-0.01499, "IIZZ"),
+                (0.052686, "IIZI"), (0.156144, "IZZI"), (0.121916, "IZZZ"),
+                (-0.013978, "ZXZI"), (-0.012123, "ZXZZ"), (0.013978, "IXII"),
+                (0.012123, "IXIZ"), (-0.01499, "ZZII"), (0.055939, "ZZIZ"),
+                (-0.013978, "IIZX"), (-0.012123, "IZIX"), (0.013978, "IIIX"),
+                (0.012123, "IZZX"), (0.003253, "ZXIX"), (-0.003253, "IXZX"),
+                (-0.003253, "ZXZX"), (0.003253, "IXIX"), (0.001854, "ZZZX"),
+                (-0.001854, "ZZIX"), (0.055939, "IZIZ"), (0.001854, "ZXIZ"),
+                (-0.001854, "IXZZ"), (0.084484, "ZZZZ"), (0.052686, "ZIZI"),
+            ],
+        },
+    },
+}
+
 HAMILTONIANS = {
     "h2": {
         "name": "H₂ Molecule",
-        "description": "Hydrogen molecule at equilibrium (STO-3G, Jordan-Wigner)",
+        "description": "Hydrogen molecule at equilibrium (STO-3G, 2q reduced). Select an encoding for the full 4-qubit representation.",
         "n_qubits": 2,
+        "supports_encoding": True,
         "pauli_list": [
             (-1.0523, "II"), (0.3979, "ZI"), (-0.3979, "IZ"),
             (-0.0112, "ZZ"), (0.1809, "XX"), (0.1809, "YY"),
@@ -20,8 +110,9 @@ HAMILTONIANS = {
     },
     "lih": {
         "name": "LiH Molecule (4q)",
-        "description": "Lithium hydride, reduced active space (STO-3G)",
+        "description": "Lithium hydride, reduced active space (STO-3G). Supports encoding selection.",
         "n_qubits": 4,
+        "supports_encoding": True,
         "pauli_list": [
             (-7.4994, "IIII"), (0.1808, "ZZII"), (0.1808, "IIZZ"),
             (0.1808, "IZIZ"), (0.1808, "ZIIZ"), (0.0453, "XXYY"),
@@ -279,6 +370,7 @@ def run_vqe(
     init_strategy: str = "random",
     custom_pauli_list: Optional[List[Tuple[float, str]]] = None,
     seed: int = 42,
+    encoding: Optional[str] = None,
 ) -> Dict:
     if hamiltonian_key == "custom" and custom_pauli_list:
         n_qubits = len(custom_pauli_list[0][1])
@@ -289,6 +381,18 @@ def run_vqe(
             "ground_truth": None,
             "units": "",
         }
+    elif encoding and hamiltonian_key in MOLECULAR_ENCODINGS and encoding in MOLECULAR_ENCODINGS[hamiltonian_key]:
+        enc_data = MOLECULAR_ENCODINGS[hamiltonian_key][encoding]
+        base = HAMILTONIANS[hamiltonian_key]
+        enc_label = {"jw": "Jordan-Wigner", "bk": "Bravyi-Kitaev", "parity": "Parity"}[encoding]
+        ham_config = {
+            "name": f"{base['name']} [{enc_label}]",
+            "n_qubits": enc_data["n_qubits"],
+            "pauli_list": enc_data["pauli_list"],
+            "ground_truth": enc_data["ground_truth"],
+            "units": base.get("units", "Hartree"),
+        }
+        n_qubits = enc_data["n_qubits"]
     else:
         ham_config = HAMILTONIANS[hamiltonian_key]
         n_qubits = ham_config["n_qubits"]

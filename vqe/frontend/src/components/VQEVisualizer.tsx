@@ -15,6 +15,12 @@ import ParameterHeatmap from "./ParameterHeatmap";
 
 const SPEED_OPTIONS = [0.5, 1, 2, 4];
 const OPTIMIZERS = ["COBYLA", "Powell", "Nelder-Mead"];
+const ENCODINGS = [
+  { key: "",       label: "Default (2q reduced)" },
+  { key: "jw",     label: "Jordan-Wigner (4q)" },
+  { key: "bk",     label: "Bravyi-Kitaev (4q)" },
+  { key: "parity", label: "Parity (4q)" },
+];
 const INIT_STRATEGIES = [
   { key: "random", label: "Random (−π … +π)" },
   { key: "near_zero", label: "Near-zero (±0.1)" },
@@ -63,6 +69,7 @@ export default function VQEVisualizer() {
   const [initStrategy, setInitStrategy]   = useState("random");
   const [seed, setSeed]                   = useState(42);
   const [showAdvanced, setShowAdvanced]   = useState(false);
+  const [encoding, setEncoding]           = useState("");
 
   // Custom Hamiltonian
   const [customHamText, setCustomHamText] = useState(
@@ -130,6 +137,7 @@ export default function VQEVisualizer() {
         init_strategy: initStrategy,
         seed,
         custom_pauli_list: customPauliList,
+        encoding: encoding || undefined,
       });
       setResult(r); setCurrentIdx(0);
     } catch (e: unknown) {
@@ -179,7 +187,7 @@ export default function VQEVisualizer() {
           {/* Hamiltonian, grouped by category */}
           <div>
             <label className="label">Hamiltonian</label>
-            <select className="select-field" value={selectedHam} onChange={(e) => setSelectedHam(e.target.value)}>
+            <select className="select-field" value={selectedHam} onChange={(e) => { setSelectedHam(e.target.value); setEncoding(""); }}>
               {Object.entries(hamByCategory).map(([cat, entries]) => (
                 <optgroup key={cat} label={cat}>
                   {entries.map(([k, v]) => (
@@ -192,6 +200,18 @@ export default function VQEVisualizer() {
               </optgroup>
             </select>
           </div>
+
+          {/* Encoding: only for molecular Hamiltonians */}
+          {hamiltonians[selectedHam]?.supports_encoding && (
+            <div>
+              <label className="label">Encoding</label>
+              <select className="select-field" value={encoding} onChange={(e) => setEncoding(e.target.value)}>
+                {ENCODINGS.map(({ key, label }) => (
+                  <option key={key} value={key}>{label}</option>
+                ))}
+              </select>
+            </div>
+          )}
 
           <div>
             <label className="label">Ansatz</label>

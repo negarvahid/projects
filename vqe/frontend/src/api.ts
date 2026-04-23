@@ -41,6 +41,7 @@ export const api = {
     init_strategy: string;
     seed: number;
     custom_pauli_list?: [number, string][];
+    encoding?: string;
   }) => post<VQEResult>("/vqe/run", params),
 
   checkAnsatz: (problem: string, ansatz: string, n_qubits: number, reps: number, custom_description?: string) =>

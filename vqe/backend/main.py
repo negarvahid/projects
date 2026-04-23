@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import Optional, List, Tuple
 
-from vqe_runner import run_vqe, HAMILTONIANS, ANSATZE
+from vqe_runner import run_vqe, HAMILTONIANS, ANSATZE, MOLECULAR_ENCODINGS
 from ansatz_checker import check_ansatz, PROBLEM_PROFILES, ANSATZ_PROFILES
 
 app = FastAPI(title="VQE Explorer API")
@@ -38,6 +38,7 @@ class VQERequest(BaseModel):
     init_strategy: str = Field(default="random")
     seed: int = Field(default=42, ge=0, le=9999)
     custom_pauli_list: Optional[List[Tuple[float, str]]] = None
+    encoding: Optional[str] = None  # "jw" | "bk" | "parity" | None
 
 
 class AnsatzCheckRequest(BaseModel):
@@ -56,6 +57,7 @@ def get_hamiltonians():
             "description": v["description"],
             "n_qubits": v["n_qubits"],
             "category": v.get("category", ""),
+            "supports_encoding": v.get("supports_encoding", False),
         }
         for k, v in HAMILTONIANS.items()
     }
@@ -84,10 +86,12 @@ def vqe_run(req: VQERequest):
     if req.optimizer not in ("COBYLA", "Powell", "Nelder-Mead"):
         raise HTTPException(400, f"Unknown optimizer: {req.optimizer}")
     try:
+        if req.encoding and req.encoding not in ("jw", "bk", "parity"):
+            raise HTTPException(400, f"Unknown encoding: {req.encoding}")
         result = run_vqe(
             req.hamiltonian, req.ansatz, req.reps, req.max_iter,
             req.optimizer, req.init_strategy,
-            req.custom_pauli_list, req.seed,
+            req.custom_pauli_list, req.seed, req.encoding,
         )
         return result
     except Exception as e:
