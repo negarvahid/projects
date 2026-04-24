@@ -90,7 +90,7 @@ def submit_ibm_job(
 
     # Step 3 — connect to IBM (save=False: never write to disk)
     service = QiskitRuntimeService(
-        channel="ibm_quantum",
+        channel="ibm_quantum_platform",
         token=ibm_token,
     )
     del ibm_token  # drop reference immediately
@@ -133,7 +133,7 @@ def fetch_ibm_result(ibm_token: str, job_id: str) -> Dict[str, Any]:
     Token is never logged or stored.
     """
     service = QiskitRuntimeService(
-        channel="ibm_quantum",
+        channel="ibm_quantum_platform",
         token=ibm_token,
     )
     del ibm_token
