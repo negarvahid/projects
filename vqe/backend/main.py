@@ -9,6 +9,7 @@ from typing import Optional, List, Tuple
 
 from vqe_runner import run_vqe, HAMILTONIANS, ANSATZE, MOLECULAR_ENCODINGS
 from ansatz_checker import check_ansatz, PROBLEM_PROFILES, ANSATZ_PROFILES
+from ibm_runner import submit_ibm_job, fetch_ibm_result
 
 app = FastAPI(title="VQE Explorer API")
 
@@ -109,6 +110,71 @@ def ansatz_check(req: AnsatzCheckRequest):
         return result
     except Exception as e:
         raise HTTPException(500, str(e))
+
+
+class IBMSubmitRequest(BaseModel):
+    ibm_token: str
+    hamiltonian: str
+    ansatz: str
+    reps: int = Field(default=2, ge=1, le=4)
+    max_iter: int = Field(default=80, ge=10, le=150)
+    optimizer: str = Field(default="COBYLA")
+    init_strategy: str = Field(default="random")
+    seed: int = Field(default=42, ge=0, le=9999)
+    encoding: Optional[str] = None
+    custom_pauli_list: Optional[List[Tuple[float, str]]] = None
+    backend_name: Optional[str] = None
+
+
+class IBMResultRequest(BaseModel):
+    ibm_token: str
+    job_id: str
+
+
+@app.post("/api/vqe/ibm/submit")
+def ibm_submit(req: IBMSubmitRequest):
+    """
+    Run classical VQE, then submit the optimized circuit to IBM Quantum.
+    The ibm_token is used transiently and never logged or stored.
+    """
+    if req.encoding and req.encoding not in ("jw", "bk", "parity"):
+        raise HTTPException(400, f"Unknown encoding: {req.encoding}")
+    try:
+        result = submit_ibm_job(
+            ibm_token=req.ibm_token,
+            hamiltonian_key=req.hamiltonian,
+            ansatz_key=req.ansatz,
+            reps=req.reps,
+            max_iter=req.max_iter,
+            optimizer=req.optimizer,
+            init_strategy=req.init_strategy,
+            seed=req.seed,
+            encoding=req.encoding,
+            custom_pauli_list=req.custom_pauli_list,
+            backend_name=req.backend_name,
+        )
+        return result
+    except Exception as e:
+        # Never include the token in error messages
+        msg = str(e)
+        if "token" in msg.lower() or "api" in msg.lower() and "key" in msg.lower():
+            raise HTTPException(401, "IBM authentication failed. Check your API token.")
+        raise HTTPException(500, msg)
+
+
+@app.post("/api/vqe/ibm/result")
+def ibm_result(req: IBMResultRequest):
+    """
+    Fetch the result of a previously submitted IBM job.
+    The ibm_token is used transiently and never logged or stored.
+    """
+    try:
+        return fetch_ibm_result(ibm_token=req.ibm_token, job_id=req.job_id)
+    except Exception as e:
+        msg = str(e)
+        if "token" in msg.lower():
+            raise HTTPException(401, "IBM authentication failed.")
+        raise HTTPException(500, msg)
 
 
 if __name__ == "__main__":

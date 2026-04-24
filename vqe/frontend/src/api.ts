@@ -46,4 +46,35 @@ export const api = {
 
   checkAnsatz: (problem: string, ansatz: string, n_qubits: number, reps: number, custom_description?: string) =>
     post<AnsatzCheckResult>("/ansatz/check", { problem, ansatz, n_qubits, reps, custom_description }),
+
+  submitIBMJob: (params: {
+    ibm_token: string;
+    hamiltonian: string;
+    ansatz: string;
+    reps: number;
+    max_iter: number;
+    optimizer: string;
+    init_strategy: string;
+    seed: number;
+    encoding?: string;
+    custom_pauli_list?: [number, string][];
+    backend_name?: string;
+  }) => post<{
+    job_id: string;
+    backend_name: string;
+    simulator_energy: number;
+    hamiltonian_name: string;
+    ansatz_name: string;
+    units: string;
+    n_qubits: number;
+    status: string;
+  }>("/vqe/ibm/submit", params),
+
+  fetchIBMResult: (ibm_token: string, job_id: string) =>
+    post<{
+      job_id: string;
+      status: string;
+      hardware_energy: number | null;
+      error: string | null;
+    }>("/vqe/ibm/result", { ibm_token, job_id }),
 };

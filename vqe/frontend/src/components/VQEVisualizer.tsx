@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from "react";
 import {
   Play, Pause, SkipBack, SkipForward, ChevronLeft, ChevronRight,
   Cpu, Zap, Settings2, Download, Eye, EyeOff, ChevronDown, ChevronUp,
-  Shuffle, RefreshCw,
+  Shuffle, RefreshCw, Server, Loader2, CheckCircle2, XCircle, Clock,
 } from "lucide-react";
 import { api } from "../api";
 import type { HamiltonianMeta } from "../api";
@@ -56,6 +56,24 @@ function parseCustomHamiltonian(text: string): [number, string][] | null {
   } catch { return null; }
 }
 
+function IBMStatusBadge({ status }: { status: string | null }) {
+  if (!status) return <span className="text-slate-500 text-[11px]">--</span>;
+  const MAP: Record<string, { icon: React.ReactNode; color: string; label: string }> = {
+    submitted:    { icon: <Clock size={11} />,      color: "text-slate-300",  label: "submitted" },
+    queued:       { icon: <Clock size={11} />,      color: "text-amber-400",  label: "queued" },
+    initializing: { icon: <Loader2 size={11} className="animate-spin" />, color: "text-indigo-300", label: "initializing" },
+    running:      { icon: <Loader2 size={11} className="animate-spin" />, color: "text-indigo-300", label: "running" },
+    done:         { icon: <CheckCircle2 size={11} />, color: "text-emerald-400", label: "done" },
+    error:        { icon: <XCircle size={11} />,    color: "text-red-400",    label: "error" },
+  };
+  const m = MAP[status] ?? { icon: null, color: "text-slate-400", label: status };
+  return (
+    <span className={`flex items-center gap-1 font-mono text-[11px] ${m.color}`}>
+      {m.icon}{m.label}
+    </span>
+  );
+}
+
 export default function VQEVisualizer() {
   const [hamiltonians, setHamiltonians] = useState<Record<string, HamiltonianMeta>>({});
   const [ansatze, setAnsatze] = useState<Record<string, AnsatzInfo>>({});
@@ -90,6 +108,25 @@ export default function VQEVisualizer() {
   const [playing, setPlaying]   = useState(false);
   const [speed, setSpeed]       = useState(1);
   const intervalRef             = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // IBM Quantum state
+  const [showIBM, setShowIBM]           = useState(false);
+  const [ibmToken, setIbmToken]         = useState("");
+  const [ibmLoading, setIbmLoading]     = useState(false);
+  const [ibmJobId, setIbmJobId]         = useState<string | null>(null);
+  const [ibmStatus, setIbmStatus]       = useState<string | null>(null);
+  const [ibmBackend, setIbmBackend]     = useState<string | null>(null);
+  const [ibmHwEnergy, setIbmHwEnergy]   = useState<number | null>(null);
+  const [ibmSimEnergy, setIbmSimEnergy] = useState<number | null>(null);
+  const [ibmUnits, setIbmUnits]         = useState("");
+  const [ibmError, setIbmError]         = useState<string | null>(null);
+  const ibmPollRef                      = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Token is held only in React state, never persisted
+  function clearIBMPoll() {
+    if (ibmPollRef.current) { clearInterval(ibmPollRef.current); ibmPollRef.current = null; }
+  }
+  useEffect(() => () => clearIBMPoll(), []);
 
   useEffect(() => {
     api.hamiltonians().then(setHamiltonians).catch(() => {});
@@ -143,6 +180,63 @@ export default function VQEVisualizer() {
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Unknown error");
     } finally { setLoading(false); }
+  }
+
+  async function handleIBMSubmit() {
+    if (!ibmToken.trim()) { setIbmError("Enter your IBM Quantum API token."); return; }
+    setIbmLoading(true); setIbmError(null); setIbmJobId(null);
+    setIbmStatus(null); setIbmHwEnergy(null); setIbmSimEnergy(null);
+    clearIBMPoll();
+
+    const customPauliList = selectedHam === "custom"
+      ? parseCustomHamiltonian(customHamText) ?? undefined
+      : undefined;
+
+    try {
+      const r = await api.submitIBMJob({
+        ibm_token: ibmToken,
+        hamiltonian: selectedHam,
+        ansatz: selectedAnsatz,
+        reps,
+        max_iter: maxIter,
+        optimizer,
+        init_strategy: initStrategy,
+        seed,
+        encoding: encoding || undefined,
+        custom_pauli_list: customPauliList,
+      });
+      setIbmJobId(r.job_id);
+      setIbmBackend(r.backend_name);
+      setIbmStatus("submitted");
+      setIbmSimEnergy(r.simulator_energy);
+      setIbmUnits(r.units);
+
+      // Poll every 12 s until done or error
+      const tokenSnapshot = ibmToken; // capture for closure
+      ibmPollRef.current = setInterval(async () => {
+        try {
+          const status = await api.fetchIBMResult(tokenSnapshot, r.job_id);
+          setIbmStatus(status.status);
+          if (status.hardware_energy !== null) {
+            setIbmHwEnergy(status.hardware_energy);
+          }
+          if (status.error) {
+            setIbmError(status.error);
+            clearIBMPoll();
+          }
+          if (status.status === "done" || status.status === "error") {
+            clearIBMPoll();
+          }
+        } catch (e: unknown) {
+          setIbmError(e instanceof Error ? e.message : "Polling failed");
+          clearIBMPoll();
+        }
+      }, 12000);
+    } catch (e: unknown) {
+      setIbmError(e instanceof Error ? e.message : "Submission failed");
+    } finally {
+      setIbmLoading(false);
+    }
   }
 
   function handleExport() {
@@ -319,6 +413,108 @@ export default function VQEVisualizer() {
           )}
         </div>
         {error && <p className="mt-2 text-red-400 text-sm">{error}</p>}
+      </div>
+
+      {/* ── IBM Quantum Panel ── */}
+      <div className="card border border-q-600">
+        <button
+          className="w-full flex items-center justify-between gap-2 text-left"
+          onClick={() => setShowIBM((v) => !v)}
+        >
+          <span className="text-xs font-semibold text-indigo-400 uppercase tracking-widest flex items-center gap-2">
+            <Server size={13} /> Run on IBM Quantum Hardware
+          </span>
+          {showIBM ? <ChevronUp size={14} className="text-slate-400" /> : <ChevronDown size={14} className="text-slate-400" />}
+        </button>
+
+        {showIBM && (
+          <div className="mt-4 space-y-4 animate-fade-in">
+            <p className="text-xs text-slate-400 leading-relaxed">
+              Enter your <a href="https://quantum.ibm.com/" target="_blank" rel="noopener noreferrer" className="text-indigo-400 hover:underline">IBM Quantum</a> API token to run the optimized circuit on real quantum hardware.
+              Your token is held only in browser memory and is never stored, logged, or sent anywhere except directly to IBM.
+            </p>
+
+            <div className="flex flex-col sm:flex-row gap-3">
+              <input
+                type="password"
+                className="select-field flex-1 font-mono text-xs"
+                placeholder="IBM Quantum API token"
+                value={ibmToken}
+                onChange={(e) => { setIbmToken(e.target.value); setIbmError(null); }}
+                autoComplete="off"
+                spellCheck={false}
+              />
+              <button
+                className="btn-primary shrink-0 text-sm"
+                onClick={handleIBMSubmit}
+                disabled={ibmLoading || !ibmToken.trim()}
+              >
+                {ibmLoading
+                  ? <><Loader2 size={13} className="animate-spin" /> Submitting…</>
+                  : <><Server size={13} /> Submit to IBM</>}
+              </button>
+            </div>
+
+            {ibmError && (
+              <div className="flex items-start gap-2 text-xs text-red-400 bg-red-950/30 border border-red-800/40 rounded-lg px-3 py-2">
+                <XCircle size={13} className="shrink-0 mt-0.5" />
+                <span>{ibmError}</span>
+              </div>
+            )}
+
+            {ibmJobId && (
+              <div className="space-y-3">
+                {/* Job info row */}
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-xs">
+                  <div className="card py-2">
+                    <p className="label text-[10px]">Job ID</p>
+                    <p className="font-mono text-slate-300 break-all text-[11px]">{ibmJobId}</p>
+                  </div>
+                  <div className="card py-2">
+                    <p className="label text-[10px]">Backend</p>
+                    <p className="font-mono text-indigo-300 text-[11px]">{ibmBackend ?? "..."}</p>
+                  </div>
+                  <div className="card py-2 col-span-2 sm:col-span-1">
+                    <p className="label text-[10px]">Status</p>
+                    <IBMStatusBadge status={ibmStatus} />
+                  </div>
+                </div>
+
+                {/* Energy comparison */}
+                {(ibmSimEnergy !== null || ibmHwEnergy !== null) && (
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="card py-3 border border-violet-800/40">
+                      <p className="label text-[10px] text-violet-400">Simulator Energy</p>
+                      <p className="font-mono font-bold text-violet-300 text-sm">
+                        {ibmSimEnergy !== null ? ibmSimEnergy.toFixed(5) : "..."}{" "}
+                        <span className="font-normal text-xs text-slate-500">{ibmUnits}</span>
+                      </p>
+                      <p className="text-[10px] text-slate-500 mt-0.5">classical VQE (noiseless)</p>
+                    </div>
+                    <div className="card py-3 border border-indigo-800/40">
+                      <p className="label text-[10px] text-indigo-400">Hardware Energy</p>
+                      {ibmHwEnergy !== null ? (
+                        <>
+                          <p className="font-mono font-bold text-indigo-300 text-sm">
+                            {ibmHwEnergy.toFixed(5)}{" "}
+                            <span className="font-normal text-xs text-slate-500">{ibmUnits}</span>
+                          </p>
+                          <p className="text-[10px] text-slate-500 mt-0.5">
+                            error: {ibmSimEnergy !== null ? (ibmHwEnergy - ibmSimEnergy >= 0 ? "+" : "") + (ibmHwEnergy - ibmSimEnergy).toFixed(5) : "N/A"}
+                          </p>
+                        </>
+                      ) : (
+                        <p className="font-mono text-slate-500 text-sm flex items-center gap-1.5 mt-1">
+                          <Loader2 size={12} className="animate-spin" /> waiting…
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* ── Results ── */}
