@@ -157,7 +157,8 @@ def ibm_submit(req: IBMSubmitRequest):
     except Exception as e:
         # Never include the token in error messages
         msg = str(e)
-        if "token" in msg.lower() or "api" in msg.lower() and "key" in msg.lower():
+        lower = msg.lower()
+        if "token" in lower or ("api" in lower and "key" in lower) or "unauthor" in lower or "401" in lower:
             raise HTTPException(401, "IBM authentication failed. Check your API token.")
         raise HTTPException(500, msg)
 

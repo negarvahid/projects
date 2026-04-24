@@ -1,17 +1,26 @@
 """
 IBM Quantum runner for VQE.
 
+Flow:
+  1. Run classical VQE to obtain optimal parameters (noiseless simulator).
+  2. Bind those parameters into the ansatz.
+  3. Transpile the bound circuit for the chosen IBM backend.
+  4. Submit a single EstimatorV2 job and return the job_id to the client.
+  5. The client polls fetch_ibm_result(job_id) until the job is done.
+
 Security contract:
   - ibm_token is NEVER logged, stored, or returned in any response.
-  - QiskitRuntimeService is created per-request with no persistent storage.
+  - QiskitRuntimeService is created per-request; no credentials hit disk.
   - The token variable is deleted immediately after the service is created.
 """
 
 import logging
+import numpy as np
 from typing import Optional, List, Tuple, Dict, Any
 
 from qiskit.quantum_info import SparsePauliOp
-from qiskit_ibm_runtime import QiskitRuntimeService, EstimatorV2, Session
+from qiskit.transpiler.preset_passmanagers import generate_preset_pass_manager
+from qiskit_ibm_runtime import QiskitRuntimeService, EstimatorV2
 
 from vqe_runner import (
     run_vqe, build_ansatz, HAMILTONIANS, MOLECULAR_ENCODINGS
@@ -19,11 +28,15 @@ from vqe_runner import (
 
 logger = logging.getLogger(__name__)
 
-# Never log at a level that would capture request bodies.
-# Explicitly suppress ibm-runtime's own loggers too.
+# Keep library loggers quiet — request bodies (which carry the token) could
+# otherwise end up in debug output.
 logging.getLogger("qiskit_ibm_runtime").setLevel(logging.WARNING)
 logging.getLogger("urllib3").setLevel(logging.WARNING)
 
+
+# ──────────────────────────────────────────────────────────────────────
+# Helpers
+# ──────────────────────────────────────────────────────────────────────
 
 def _get_hamiltonian_config(
     hamiltonian_key: str,
@@ -37,7 +50,11 @@ def _get_hamiltonian_config(
             "pauli_list": custom_pauli_list,
             "units": "",
         }
-    if encoding and hamiltonian_key in MOLECULAR_ENCODINGS and encoding in MOLECULAR_ENCODINGS[hamiltonian_key]:
+    if (
+        encoding
+        and hamiltonian_key in MOLECULAR_ENCODINGS
+        and encoding in MOLECULAR_ENCODINGS[hamiltonian_key]
+    ):
         enc_data = MOLECULAR_ENCODINGS[hamiltonian_key][encoding]
         enc_label = {"jw": "Jordan-Wigner", "bk": "Bravyi-Kitaev", "parity": "Parity"}[encoding]
         base = HAMILTONIANS[hamiltonian_key]
@@ -49,6 +66,39 @@ def _get_hamiltonian_config(
         }
     return HAMILTONIANS[hamiltonian_key]
 
+
+def _connect(token: str) -> QiskitRuntimeService:
+    """Open a runtime service. The caller MUST `del` the token after calling."""
+    return QiskitRuntimeService(channel="ibm_quantum_platform", token=token)
+
+
+def _pick_backend(service: QiskitRuntimeService, n_qubits: int, backend_name: Optional[str]):
+    if backend_name:
+        return service.backend(backend_name)
+    # least_busy filter kwargs differ across runtime versions; try richest first.
+    try:
+        return service.least_busy(operational=True, simulator=False, min_num_qubits=n_qubits)
+    except TypeError:
+        # newer versions dropped simulator=
+        return service.least_busy(operational=True, min_num_qubits=n_qubits)
+
+
+def _normalize_status(job) -> str:
+    """job.status() returns a string in new runtime, an enum in old. Return UPPER string."""
+    s = job.status()
+    return (s.name if hasattr(s, "name") else str(s)).upper()
+
+
+def _extract_energy(result) -> float:
+    """EstimatorV2 returns a PubResult whose data.evs may be a scalar or ndarray."""
+    evs = result[0].data.evs
+    arr = np.asarray(evs).reshape(-1)
+    return float(arr[0])
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Public API
+# ──────────────────────────────────────────────────────────────────────
 
 def submit_ibm_job(
     ibm_token: str,
@@ -63,14 +113,7 @@ def submit_ibm_job(
     custom_pauli_list: Optional[List[Tuple[float, str]]] = None,
     backend_name: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """
-    1. Run classical VQE to find optimal parameters.
-    2. Transpile the bound circuit.
-    3. Submit one Estimator job to IBM Quantum with those parameters.
-    Returns job_id and metadata. Does NOT return or log the token.
-    """
-
-    # Step 1 — classical VQE to get optimal params
+    # Step 1 — classical VQE locally to find optimal parameters
     sim_result = run_vqe(
         hamiltonian_key, ansatz_key, reps, max_iter,
         optimizer, init_strategy, custom_pauli_list, seed, encoding,
@@ -78,7 +121,9 @@ def submit_ibm_job(
     optimal_params = sim_result["iterations"][-1]["params"]
     simulator_energy = sim_result["final_energy"]
 
-    # Step 2 — build bound circuit
+    # Step 2 — build the bound ansatz
+    # NOTE: no measure_all(). EstimatorV2 computes expectation values; adding
+    # measurements would invalidate the circuit layout used by apply_layout.
     ham_config = _get_hamiltonian_config(hamiltonian_key, encoding, custom_pauli_list)
     n_qubits = ham_config["n_qubits"]
     hamiltonian = SparsePauliOp.from_list([(p, c) for c, p in ham_config["pauli_list"]])
@@ -86,38 +131,27 @@ def submit_ibm_job(
     qc, params = build_ansatz(ansatz_key, n_qubits, reps)
     param_dict = {p: float(v) for p, v in zip(params, optimal_params)}
     bound_circuit = qc.assign_parameters(param_dict)
-    bound_circuit.measure_all()
 
-    # Step 3 — connect to IBM (save=False: never write to disk)
-    service = QiskitRuntimeService(
-        channel="ibm_quantum_platform",
-        token=ibm_token,
-    )
-    del ibm_token  # drop reference immediately
+    # Step 3 — open service, pick backend
+    service = _connect(ibm_token)
+    del ibm_token  # drop the reference before any potentially-logging call
 
-    if backend_name:
-        backend = service.backend(backend_name)
-    else:
-        backend = service.least_busy(
-            operational=True,
-            simulator=False,
-            min_num_qubits=n_qubits,
-        )
+    backend = _pick_backend(service, n_qubits, backend_name)
 
-    # Transpile for the target backend
-    from qiskit.transpiler.preset_passmanagers import generate_preset_pass_manager
+    # Step 4 — transpile for that backend and map the observable to the layout
     pm = generate_preset_pass_manager(optimization_level=1, backend=backend)
     isa_circuit = pm.run(bound_circuit)
     isa_hamiltonian = hamiltonian.apply_layout(isa_circuit.layout)
 
-    # Step 4 — submit Estimator job (non-blocking)
-    with Session(backend=backend) as session:
-        estimator = EstimatorV2(session=session)
-        job = estimator.run([(isa_circuit, isa_hamiltonian)])
+    # Step 5 — submit as a single job (mode=backend, no Session needed).
+    # Running inside a `with Session(...)` block and then exiting would close
+    # the session and can cancel the job on some plans.
+    estimator = EstimatorV2(mode=backend)
+    job = estimator.run([(isa_circuit, isa_hamiltonian)])
 
     return {
         "job_id": job.job_id(),
-        "backend_name": backend.name,
+        "backend_name": getattr(backend, "name", str(backend)),
         "simulator_energy": simulator_energy,
         "hamiltonian_name": ham_config["name"],
         "ansatz_name": sim_result["ansatz_name"],
@@ -128,42 +162,48 @@ def submit_ibm_job(
 
 
 def fetch_ibm_result(ibm_token: str, job_id: str) -> Dict[str, Any]:
-    """
-    Fetch the result of a previously submitted IBM job.
-    Token is never logged or stored.
-    """
-    service = QiskitRuntimeService(
-        channel="ibm_quantum_platform",
-        token=ibm_token,
-    )
+    service = _connect(ibm_token)
     del ibm_token
 
     job = service.job(job_id)
-    status = job.status()
+    status = _normalize_status(job)
 
-    if status.name in ("QUEUED", "RUNNING", "INITIALIZING"):
+    if status in ("QUEUED", "RUNNING", "INITIALIZING", "VALIDATING"):
         return {
             "job_id": job_id,
-            "status": status.name.lower(),
+            "status": status.lower(),
             "hardware_energy": None,
             "error": None,
         }
 
-    if status.name == "ERROR":
+    if status in ("ERROR", "CANCELLED", "FAILED"):
+        err_msg: Optional[str] = None
+        try:
+            if hasattr(job, "error_message"):
+                err_msg = job.error_message()
+        except Exception as e:
+            err_msg = str(e)
         return {
             "job_id": job_id,
             "status": "error",
             "hardware_energy": None,
-            "error": str(job.error_message()),
+            "error": err_msg or status,
         }
 
-    # DONE
-    result = job.result()
-    hardware_energy = float(result[0].data.evs)
-
-    return {
-        "job_id": job_id,
-        "status": "done",
-        "hardware_energy": round(hardware_energy, 6),
-        "error": None,
-    }
+    # DONE — try to extract the expectation value.
+    try:
+        result = job.result()
+        hardware_energy = _extract_energy(result)
+        return {
+            "job_id": job_id,
+            "status": "done",
+            "hardware_energy": round(hardware_energy, 6),
+            "error": None,
+        }
+    except Exception as e:
+        return {
+            "job_id": job_id,
+            "status": "error",
+            "hardware_energy": None,
+            "error": f"Failed to parse result: {e}",
+        }
