@@ -59,22 +59,47 @@ export const api = {
     encoding?: string;
     custom_pauli_list?: [number, string][];
     backend_name?: string;
-  }) => post<{
-    job_id: string;
-    backend_name: string;
-    simulator_energy: number;
-    hamiltonian_name: string;
-    ansatz_name: string;
-    units: string;
-    n_qubits: number;
-    status: string;
-  }>("/vqe/ibm/submit", params),
+  }) => post<IBMSubmitResponse>("/vqe/ibm/submit", params),
 
   fetchIBMResult: (ibm_token: string, job_id: string) =>
-    post<{
-      job_id: string;
-      status: string;
-      hardware_energy: number | null;
-      error: string | null;
-    }>("/vqe/ibm/result", { ibm_token, job_id }),
+    post<IBMResultResponse>("/vqe/ibm/result", { ibm_token, job_id }),
 };
+
+export interface CircuitStats {
+  depth: number;
+  total_gates: number;
+  two_qubit_gates: number;
+  ops: Record<string, number>;
+}
+
+export interface BackendInfo {
+  name: string;
+  num_qubits?: number;
+  processor_type?: Record<string, unknown> | string;
+  basis_gates?: string[];
+}
+
+export interface IBMSubmitResponse {
+  job_id: string;
+  backend_name: string;
+  simulator_energy: number;
+  hamiltonian_name: string;
+  ansatz_name: string;
+  units: string;
+  n_qubits: number;
+  status: string;
+  backend_info?: BackendInfo;
+  logical_stats?: CircuitStats;
+  isa_stats?: CircuitStats;
+  physical_qubits?: number[] | null;
+  n_hamiltonian_terms?: number;
+}
+
+export interface IBMResultResponse {
+  job_id: string;
+  status: string;
+  hardware_energy: number | null;
+  hardware_std?: number | null;
+  metrics?: Record<string, number | string>;
+  error: string | null;
+}

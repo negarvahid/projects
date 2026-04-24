@@ -96,6 +96,95 @@ def _extract_energy(result) -> float:
     return float(arr[0])
 
 
+def _extract_std(result) -> Optional[float]:
+    """Shot-noise standard error on the expectation value, if reported."""
+    try:
+        stds = result[0].data.stds
+        arr = np.asarray(stds).reshape(-1)
+        return float(arr[0])
+    except Exception:
+        return None
+
+
+def _circuit_stats(qc) -> Dict[str, Any]:
+    """Depth, total gates, 2q-gate count, and per-op counts."""
+    ops = dict(qc.count_ops())
+    # Entangling gates are the main driver of hardware noise.
+    two_qubit = sum(c for name, c in ops.items() if name.lower() in {
+        "cx", "cz", "ecr", "rzz", "rxx", "ryy", "swap", "iswap", "cy",
+    })
+    return {
+        "depth": int(qc.depth()),
+        "total_gates": int(sum(ops.values())),
+        "two_qubit_gates": int(two_qubit),
+        "ops": {k: int(v) for k, v in ops.items()},
+    }
+
+
+def _physical_qubits(isa_circuit) -> Optional[List[int]]:
+    """Which physical qubits on the backend the logical circuit was mapped to."""
+    try:
+        layout = isa_circuit.layout
+        if layout is None:
+            return None
+        # Qiskit exposes final_index_layout() on TranspileLayout
+        if hasattr(layout, "final_index_layout"):
+            return [int(q) for q in layout.final_index_layout()]
+        if hasattr(layout, "initial_layout"):
+            v2p = layout.initial_layout.get_virtual_bits()
+            return [int(v2p[q]) for q in sorted(v2p, key=lambda b: b.index)]
+    except Exception:
+        return None
+    return None
+
+
+def _backend_info(backend) -> Dict[str, Any]:
+    info: Dict[str, Any] = {"name": getattr(backend, "name", str(backend))}
+    try:
+        info["num_qubits"] = int(backend.num_qubits)
+    except Exception:
+        pass
+    try:
+        cfg = backend.configuration() if hasattr(backend, "configuration") else None
+        if cfg is not None:
+            info["processor_type"] = getattr(cfg, "processor_type", None) or {}
+            info["basis_gates"] = list(getattr(cfg, "basis_gates", []) or [])
+    except Exception:
+        pass
+    try:
+        # version-independent: available on BackendV2
+        info["basis_gates"] = info.get("basis_gates") or list(backend.operation_names)
+    except Exception:
+        pass
+    return info
+
+
+def _job_metrics(job) -> Dict[str, Any]:
+    """Queue / execution timings. Schema varies across runtime versions."""
+    out: Dict[str, Any] = {}
+    try:
+        m = job.metrics() if hasattr(job, "metrics") else {}
+    except Exception:
+        m = {}
+    # common keys in recent runtime
+    timestamps = m.get("timestamps") or {}
+    for k in ("created", "running", "finished"):
+        if k in timestamps:
+            out[k] = timestamps[k]
+    # usage seconds, if provided
+    usage = m.get("usage") or {}
+    if "seconds" in usage:
+        out["usage_seconds"] = float(usage["seconds"])
+    # top-level durations seen in some versions
+    for k in ("queue_time", "execution_time", "elapsed_time"):
+        if k in m:
+            try:
+                out[k] = float(m[k])
+            except Exception:
+                pass
+    return out
+
+
 # ──────────────────────────────────────────────────────────────────────
 # Public API
 # ──────────────────────────────────────────────────────────────────────
@@ -158,6 +247,12 @@ def submit_ibm_job(
         "units": ham_config.get("units", ""),
         "n_qubits": n_qubits,
         "status": "submitted",
+        # Visualization payload
+        "backend_info": _backend_info(backend),
+        "logical_stats": _circuit_stats(bound_circuit),
+        "isa_stats": _circuit_stats(isa_circuit),
+        "physical_qubits": _physical_qubits(isa_circuit),
+        "n_hamiltonian_terms": int(len(ham_config["pauli_list"])),
     }
 
 
@@ -194,10 +289,14 @@ def fetch_ibm_result(ibm_token: str, job_id: str) -> Dict[str, Any]:
     try:
         result = job.result()
         hardware_energy = _extract_energy(result)
+        std = _extract_std(result)
+        metrics = _job_metrics(job)
         return {
             "job_id": job_id,
             "status": "done",
             "hardware_energy": round(hardware_energy, 6),
+            "hardware_std": round(std, 6) if std is not None else None,
+            "metrics": metrics,
             "error": None,
         }
     except Exception as e:
@@ -205,5 +304,7 @@ def fetch_ibm_result(ibm_token: str, job_id: str) -> Dict[str, Any]:
             "job_id": job_id,
             "status": "error",
             "hardware_energy": None,
+            "hardware_std": None,
+            "metrics": {},
             "error": f"Failed to parse result: {e}",
         }

@@ -5,13 +5,14 @@ import {
   Shuffle, RefreshCw, Server, Loader2, CheckCircle2, XCircle, Clock,
 } from "lucide-react";
 import { api } from "../api";
-import type { HamiltonianMeta } from "../api";
+import type { HamiltonianMeta, IBMSubmitResponse, IBMResultResponse } from "../api";
 import type { VQEResult, AnsatzInfo } from "../types";
 import CircuitDiagram from "./CircuitDiagram";
 import EnergyPlot from "./EnergyPlot";
 import BlochSphere from "./BlochSphere";
 import StateVector from "./StateVector";
 import ParameterHeatmap from "./ParameterHeatmap";
+import IBMResultsViz from "./IBMResultsViz";
 
 const SPEED_OPTIONS = [0.5, 1, 2, 4];
 const OPTIMIZERS = ["COBYLA", "Powell", "Nelder-Mead"];
@@ -117,9 +118,12 @@ export default function VQEVisualizer() {
   const [ibmStatus, setIbmStatus]       = useState<string | null>(null);
   const [ibmBackend, setIbmBackend]     = useState<string | null>(null);
   const [ibmHwEnergy, setIbmHwEnergy]   = useState<number | null>(null);
+  const [ibmHwStd, setIbmHwStd]         = useState<number | null>(null);
   const [ibmSimEnergy, setIbmSimEnergy] = useState<number | null>(null);
   const [ibmUnits, setIbmUnits]         = useState("");
   const [ibmError, setIbmError]         = useState<string | null>(null);
+  const [ibmSubmitInfo, setIbmSubmitInfo] = useState<IBMSubmitResponse | null>(null);
+  const [ibmMetrics, setIbmMetrics]     = useState<Record<string, number | string> | undefined>(undefined);
   const ibmPollRef                      = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Token is held only in React state, never persisted
@@ -186,6 +190,7 @@ export default function VQEVisualizer() {
     if (!ibmToken.trim()) { setIbmError("Enter your IBM Quantum API token."); return; }
     setIbmLoading(true); setIbmError(null); setIbmJobId(null);
     setIbmStatus(null); setIbmHwEnergy(null); setIbmSimEnergy(null);
+    setIbmHwStd(null); setIbmSubmitInfo(null); setIbmMetrics(undefined);
     clearIBMPoll();
 
     const customPauliList = selectedHam === "custom"
@@ -210,16 +215,21 @@ export default function VQEVisualizer() {
       setIbmStatus("submitted");
       setIbmSimEnergy(r.simulator_energy);
       setIbmUnits(r.units);
+      setIbmSubmitInfo(r);
 
       // Poll every 12 s until done or error
       const tokenSnapshot = ibmToken; // capture for closure
       ibmPollRef.current = setInterval(async () => {
         try {
-          const status = await api.fetchIBMResult(tokenSnapshot, r.job_id);
+          const status: IBMResultResponse = await api.fetchIBMResult(tokenSnapshot, r.job_id);
           setIbmStatus(status.status);
-          if (status.hardware_energy !== null) {
+          if (status.hardware_energy !== null && status.hardware_energy !== undefined) {
             setIbmHwEnergy(status.hardware_energy);
           }
+          if (status.hardware_std !== null && status.hardware_std !== undefined) {
+            setIbmHwStd(status.hardware_std);
+          }
+          if (status.metrics) setIbmMetrics(status.metrics);
           if (status.error) {
             setIbmError(status.error);
             clearIBMPoll();
@@ -510,6 +520,24 @@ export default function VQEVisualizer() {
                       )}
                     </div>
                   </div>
+                )}
+
+                {/* Rich visualization once we have hardware data or transpilation stats */}
+                {(ibmHwEnergy !== null || ibmSubmitInfo?.isa_stats) && (
+                  <IBMResultsViz
+                    simulatorEnergy={ibmSimEnergy}
+                    hardwareEnergy={ibmHwEnergy}
+                    hardwareStd={ibmHwStd}
+                    groundTruth={result?.ground_truth ?? null}
+                    units={ibmUnits}
+                    logicalStats={ibmSubmitInfo?.logical_stats}
+                    isaStats={ibmSubmitInfo?.isa_stats}
+                    physicalQubits={ibmSubmitInfo?.physical_qubits ?? null}
+                    backendInfo={ibmSubmitInfo?.backend_info}
+                    backendNumQubitsFallback={ibmSubmitInfo?.backend_info?.num_qubits}
+                    nHamiltonianTerms={ibmSubmitInfo?.n_hamiltonian_terms}
+                    metrics={ibmMetrics}
+                  />
                 )}
               </div>
             )}
