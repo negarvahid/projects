@@ -13,7 +13,6 @@ from typing import Optional, List, Tuple, Dict, Any
 
 from qiskit.quantum_info import SparsePauliOp
 from qiskit_ibm_runtime import QiskitRuntimeService, EstimatorV2, Session
-from qiskit_ibm_runtime.fake_provider import FakeProvider
 
 from vqe_runner import (
     run_vqe, build_ansatz, HAMILTONIANS, MOLECULAR_ENCODINGS
