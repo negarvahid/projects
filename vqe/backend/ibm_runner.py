@@ -3,8 +3,7 @@ IBM Quantum runner for VQE.
 
 Security contract:
   - ibm_token is NEVER logged, stored, or returned in any response.
-  - QiskitRuntimeService is always created with save=False so credentials
-    are never written to disk on the server.
+  - QiskitRuntimeService is created per-request with no persistent storage.
   - The token variable is deleted immediately after the service is created.
 """
 
@@ -93,7 +92,6 @@ def submit_ibm_job(
     service = QiskitRuntimeService(
         channel="ibm_quantum",
         token=ibm_token,
-        save=False,
     )
     del ibm_token  # drop reference immediately
 
@@ -137,7 +135,6 @@ def fetch_ibm_result(ibm_token: str, job_id: str) -> Dict[str, Any]:
     service = QiskitRuntimeService(
         channel="ibm_quantum",
         token=ibm_token,
-        save=False,
     )
     del ibm_token
 
