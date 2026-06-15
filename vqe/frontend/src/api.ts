@@ -1,4 +1,7 @@
-import type { VQEResult, AnsatzCheckResult, HamiltonianInfo, AnsatzInfo } from "./types";
+import type {
+  VQEResult, AnsatzCheckResult, HamiltonianInfo, AnsatzInfo,
+  NoiseSweepResult, BarrenResult,
+} from "./types";
 
 // In production (GitHub Pages), set VITE_API_URL to your Render backend URL.
 // In dev, Vite proxies /api → localhost:8000 so BASE = "/api" works.
@@ -40,9 +43,26 @@ export const api = {
     optimizer: string;
     init_strategy: string;
     seed: number;
+    shots?: number;
     custom_pauli_list?: [number, string][];
     encoding?: string;
   }) => post<VQEResult>("/vqe/run", params),
+
+  noiseSweep: (params: {
+    hamiltonian: string;
+    ansatz: string;
+    reps: number;
+    optimizer: string;
+    init_strategy: string;
+    max_iter: number;
+    seed: number;
+    shots?: number;
+    noise_levels?: number[];
+    custom_pauli_list?: [number, string][];
+  }) => post<NoiseSweepResult>("/vqe/noise", params),
+
+  barrenScan: (params: { n_samples?: number; seed?: number; qubit_range?: number[] }) =>
+    post<BarrenResult>("/vqe/barren", params),
 
   checkAnsatz: (problem: string, ansatz: string, n_qubits: number, reps: number, custom_description?: string) =>
     post<AnsatzCheckResult>("/ansatz/check", { problem, ansatz, n_qubits, reps, custom_description }),

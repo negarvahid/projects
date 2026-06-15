@@ -12,6 +12,9 @@ import EnergyPlot from "./EnergyPlot";
 import BlochSphere from "./BlochSphere";
 import StateVector from "./StateVector";
 import ParameterHeatmap from "./ParameterHeatmap";
+import MeasurementHistogram from "./MeasurementHistogram";
+import NoisePanel from "./NoisePanel";
+import BarrenPanel from "./BarrenPanel";
 import IBMResultsViz from "./IBMResultsViz";
 
 const SPEED_OPTIONS = [0.5, 1, 2, 4];
@@ -29,13 +32,16 @@ const INIT_STRATEGIES = [
   { key: "pi_fractions", label: "π-fractions" },
 ];
 
-type PanelKey = "circuit" | "bloch" | "energy" | "states" | "heatmap";
+type PanelKey = "circuit" | "bloch" | "energy" | "states" | "heatmap" | "measurement" | "noise" | "barren";
 const ALL_PANELS: { key: PanelKey; label: string }[] = [
-  { key: "circuit",  label: "Circuit" },
-  { key: "bloch",    label: "Bloch Spheres" },
-  { key: "energy",   label: "Energy Plot" },
-  { key: "states",   label: "State Distribution" },
-  { key: "heatmap",  label: "Param Heatmap" },
+  { key: "circuit",     label: "Circuit" },
+  { key: "bloch",       label: "Bloch Spheres" },
+  { key: "energy",      label: "Energy Plot" },
+  { key: "states",      label: "State Distribution" },
+  { key: "heatmap",     label: "Param Heatmap" },
+  { key: "measurement", label: "Measurement" },
+  { key: "noise",       label: "Noise" },
+  { key: "barren",      label: "Barren Plateaus" },
 ];
 
 function parseCustomHamiltonian(text: string): [number, string][] | null {
@@ -87,6 +93,7 @@ export default function VQEVisualizer() {
   const [optimizer, setOptimizer]         = useState("COBYLA");
   const [initStrategy, setInitStrategy]   = useState("random");
   const [seed, setSeed]                   = useState(42);
+  const [shots, setShots]                 = useState(1024);
   const [showAdvanced, setShowAdvanced]   = useState(false);
   const [encoding, setEncoding]           = useState("");
 
@@ -99,6 +106,7 @@ export default function VQEVisualizer() {
   // Panels visibility
   const [visiblePanels, setVisiblePanels] = useState<Record<PanelKey, boolean>>({
     circuit: true, bloch: true, energy: true, states: true, heatmap: true,
+    measurement: true, noise: false, barren: false,
   });
 
   // Run state
@@ -177,6 +185,7 @@ export default function VQEVisualizer() {
         optimizer,
         init_strategy: initStrategy,
         seed,
+        shots,
         custom_pauli_list: customPauliList,
         encoding: encoding || undefined,
       });
@@ -401,6 +410,12 @@ export default function VQEVisualizer() {
                 </button>
               </div>
             </div>
+            <div>
+              <label className="label">Measurement shots</label>
+              <select className="select-field" value={shots} onChange={(e) => setShots(Number(e.target.value))}>
+                {[256, 1024, 4096, 8192].map((s) => <option key={s} value={s}>{s.toLocaleString()}</option>)}
+              </select>
+            </div>
           </div>
         )}
 
@@ -579,6 +594,24 @@ export default function VQEVisualizer() {
               },
               { label: "Best Found", value: result.final_energy.toFixed(5), unit: result.units, color: "text-emerald-300", sub: null },
               {
+                label: "Fidelity",
+                value: result.fidelity != null ? result.fidelity.toFixed(4) : "N/A",
+                unit: "",
+                color: "text-teal-300",
+                sub: result.fidelity != null
+                  ? (result.fidelity > 0.99 ? "excellent" : result.fidelity > 0.9 ? "good" : "low overlap")
+                  : null,
+                subColor: result.fidelity != null && result.fidelity > 0.99 ? "text-emerald-400" : "text-amber-400",
+              },
+              {
+                label: "Energy Error",
+                value: result.energy_error != null ? result.energy_error.toExponential(2) : "N/A",
+                unit: result.units,
+                color: "text-orange-300",
+                sub: result.exact_ground_energy != null ? `exact ${result.exact_ground_energy.toFixed(4)}` : null,
+                subColor: "text-slate-500",
+              },
+              {
                 label: "Ground Truth",
                 value: result.ground_truth != null ? result.ground_truth.toFixed(4) : "N/A",
                 unit: result.ground_truth != null ? result.units : "",
@@ -650,6 +683,48 @@ export default function VQEVisualizer() {
             <div className="card">
               <p className="label mb-3">Parameter Evolution Heatmap</p>
               <ParameterHeatmap allParams={allParams} currentIdx={currentIdx} paramNames={result.param_names} />
+            </div>
+          )}
+
+          {/* Measurement histogram (shot-based) */}
+          {visiblePanels.measurement && result.measurement_counts && (
+            <div className="card">
+              <p className="label mb-3">Measurement Histogram — optimal state, {(result.shots ?? 1024).toLocaleString()} shots</p>
+              <MeasurementHistogram
+                counts={result.measurement_counts}
+                shots={result.shots ?? 1024}
+                nQubits={result.n_qubits}
+              />
+            </div>
+          )}
+
+          {/* Noise degradation */}
+          {visiblePanels.noise && (
+            <div className="card">
+              <p className="label mb-3">Noise Degradation — energy & fidelity vs hardware noise</p>
+              <NoisePanel
+                config={{
+                  hamiltonian: selectedHam,
+                  ansatz: selectedAnsatz,
+                  reps,
+                  optimizer,
+                  init_strategy: initStrategy,
+                  max_iter: maxIter,
+                  seed,
+                  shots,
+                  custom_pauli_list: selectedHam === "custom"
+                    ? parseCustomHamiltonian(customHamText) ?? undefined
+                    : undefined,
+                }}
+              />
+            </div>
+          )}
+
+          {/* Barren plateaus */}
+          {visiblePanels.barren && (
+            <div className="card">
+              <p className="label mb-3">Barren Plateaus — gradient variance vs system size</p>
+              <BarrenPanel />
             </div>
           )}
 

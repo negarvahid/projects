@@ -1,8 +1,12 @@
 import numpy as np
-from qiskit import QuantumCircuit
+from qiskit import QuantumCircuit, transpile
 from qiskit.quantum_info import SparsePauliOp, Statevector, DensityMatrix, partial_trace
 from qiskit.circuit import ParameterVector
+from qiskit.primitives import StatevectorSampler
+from qiskit_aer import AerSimulator
+from qiskit_aer.noise import NoiseModel, depolarizing_error, ReadoutError
 from scipy.optimize import minimize
+from scipy.linalg import eigh
 from typing import List, Dict, Tuple, Optional, Any
 
 # Pre-computed qubit Hamiltonians for molecular systems under each fermionic encoding.
@@ -361,6 +365,268 @@ def serialize_circuit(qc: QuantumCircuit, param_name_map: Dict[str, float]) -> T
     return gates, max(qubit_col)
 
 
+def _build_noise_model(p: float) -> NoiseModel:
+    """Depolarizing gate noise + symmetric readout error scaled by strength p.
+
+    Mirrors real hardware where two-qubit gates dominate the error budget:
+    1-qubit gates get p/10, 2-qubit gates get p, readout flips at p/2.
+    """
+    nm = NoiseModel()
+    if p > 0:
+        nm.add_all_qubit_quantum_error(
+            depolarizing_error(p * 0.1, 1), ["rx", "ry", "rz", "x", "sx", "h"]
+        )
+        nm.add_all_qubit_quantum_error(depolarizing_error(p, 2), ["cx", "cz"])
+        ro = p * 0.5
+        nm.add_all_qubit_readout_error(ReadoutError([[1 - ro, ro], [ro, 1 - ro]]))
+    return nm
+
+
+def _sample_counts(circuit: QuantumCircuit, sim: AerSimulator, shots: int) -> Dict[str, int]:
+    c = circuit.copy()
+    c.measure_all()
+    counts = sim.run(transpile(c, sim), shots=shots).result().get_counts()
+    return {k: int(v) for k, v in sorted(counts.items(), key=lambda kv: int(kv[0], 2))}
+
+
+def noise_sweep(
+    hamiltonian_key: str,
+    ansatz_key: str,
+    reps: int = 2,
+    optimizer: str = "COBYLA",
+    init_strategy: str = "random",
+    max_iter: int = 80,
+    custom_pauli_list: Optional[List[Tuple[float, str]]] = None,
+    seed: int = 42,
+    shots: int = 4096,
+    noise_levels: Optional[List[float]] = None,
+) -> Dict:
+    """Evaluate the optimal VQE state under increasing hardware noise.
+
+    Runs VQE noiselessly to find the optimal parameters, then -- holding those
+    fixed -- measures how the energy and ground-state fidelity degrade as the
+    depolarizing/readout noise strength increases. Also returns a sampled
+    measurement histogram with and without noise for visual comparison.
+    """
+    if noise_levels is None:
+        noise_levels = [0.0, 0.002, 0.005, 0.01, 0.02, 0.03, 0.05, 0.08, 0.1]
+
+    if hamiltonian_key == "custom" and custom_pauli_list:
+        n_qubits = len(custom_pauli_list[0][1])
+        ham_config: Dict[str, Any] = {
+            "name": "Custom Hamiltonian",
+            "n_qubits": n_qubits,
+            "pauli_list": custom_pauli_list,
+        }
+    else:
+        ham_config = HAMILTONIANS[hamiltonian_key]
+        n_qubits = ham_config["n_qubits"]
+
+    hamiltonian = SparsePauliOp.from_list([(p, c) for c, p in ham_config["pauli_list"]])
+    H_matrix = hamiltonian.to_matrix()
+    eigvals, eigvecs = eigh(H_matrix)
+    exact_ground_energy = float(eigvals[0])
+    ground_vec = eigvecs[:, 0]
+
+    # Noiseless VQE -> optimal parameters
+    vqe = run_vqe(
+        hamiltonian_key, ansatz_key, reps, max_iter,
+        optimizer, init_strategy, custom_pauli_list, seed,
+    )
+    best = min(vqe["iterations"], key=lambda it: it["energy"])
+    qc, params = build_ansatz(ansatz_key, n_qubits, reps)
+    opt_qc = qc.assign_parameters(
+        {p: float(v) for p, v in zip(params, best["params"])}
+    )
+
+    points: List[Dict[str, Any]] = []
+    for p in noise_levels:
+        nm = _build_noise_model(p)
+        sim = AerSimulator(method="density_matrix", noise_model=nm)
+        circ = opt_qc.copy()
+        circ.save_density_matrix()
+        rho = sim.run(transpile(circ, sim)).result().data()["density_matrix"].data
+        energy = float(np.real(np.trace(rho @ H_matrix)))
+        fidelity = float(np.real(ground_vec.conj() @ rho @ ground_vec))
+        points.append({
+            "noise": round(float(p), 5),
+            "energy": round(energy, 6),
+            "energy_error": round(abs(energy - exact_ground_energy), 6),
+            "fidelity": round(fidelity, 6),
+        })
+
+    # Sampled histograms: clean vs the strongest noise level
+    max_p = max(noise_levels)
+    clean_counts = _sample_counts(opt_qc, AerSimulator(), shots)
+    noisy_counts = _sample_counts(
+        opt_qc, AerSimulator(noise_model=_build_noise_model(max_p)), shots
+    )
+
+    return {
+        "noise_levels": [round(float(p), 5) for p in noise_levels],
+        "points": points,
+        "exact_ground_energy": round(exact_ground_energy, 6),
+        "noiseless_energy": best["energy"],
+        "max_noise": round(float(max_p), 5),
+        "shots": shots,
+        "clean_counts": clean_counts,
+        "noisy_counts": noisy_counts,
+        "hamiltonian_name": ham_config["name"],
+        "ansatz_name": ANSATZE[ansatz_key]["name"],
+        "n_qubits": n_qubits,
+        "units": ham_config.get("units", ""),
+    }
+
+
+def barren_plateau_scan(
+    qubit_range: Optional[List[int]] = None,
+    reps: Optional[int] = None,
+    n_samples: int = 120,
+    seed: int = 1,
+) -> Dict:
+    """Demonstrate barren plateaus: variance of a cost gradient vs system size.
+
+    For a hardware-efficient ansatz at linear depth, samples random parameter
+    vectors and computes the parameter-shift gradient of <Z_0 Z_1> w.r.t. the
+    first parameter. The variance of that gradient shrinks ~2^{-n} with the
+    number of qubits -- the barren-plateau signature.
+    """
+    if qubit_range is None:
+        qubit_range = [2, 3, 4, 5, 6, 7]
+
+    rng = np.random.default_rng(seed)
+    points: List[Dict[str, Any]] = []
+    for n in qubit_range:
+        r = n if reps is None else reps
+        qc, params = build_ansatz("hea", n, r)
+        n_par = len(params)
+        labels = ["I"] * n
+        labels[0] = "Z"
+        labels[1] = "Z"
+        obs = SparsePauliOp("".join(labels[::-1]))
+
+        def energy(x: np.ndarray) -> float:
+            bound = qc.assign_parameters({p: float(v) for p, v in zip(params, x)})
+            return float(Statevector(bound).expectation_value(obs).real)
+
+        grads = []
+        for _ in range(n_samples):
+            x = rng.uniform(-np.pi, np.pi, n_par)
+            xp = x.copy(); xp[0] += np.pi / 2
+            xm = x.copy(); xm[0] -= np.pi / 2
+            grads.append((energy(xp) - energy(xm)) / 2.0)
+
+        points.append({
+            "n_qubits": n,
+            "reps": r,
+            "n_params": n_par,
+            "variance": float(np.var(grads)),
+            "mean_grad": float(np.mean(grads)),
+        })
+
+    return {
+        "observable": "Z0 Z1",
+        "ansatz": "hea",
+        "n_samples": n_samples,
+        "points": points,
+    }
+
+
+def compute_landscape(
+    hamiltonian_key: str,
+    ansatz_key: str,
+    reps: int = 2,
+    param_x: int = 0,
+    param_y: int = 1,
+    resolution: int = 41,
+    span: float = float(np.pi),
+    optimizer: str = "COBYLA",
+    max_iter: int = 80,
+    init_strategy: str = "random",
+    custom_pauli_list: Optional[List[Tuple[float, str]]] = None,
+    seed: int = 42,
+) -> Dict:
+    """2D slice of the VQE cost landscape.
+
+    Runs VQE to find the optimum and trajectory, then sweeps two parameters
+    (param_x, param_y) over [-span, span] while holding the rest at their
+    optimal values. Returns the energy grid plus the optimizer path projected
+    onto the (param_x, param_y) plane.
+    """
+    if hamiltonian_key == "custom" and custom_pauli_list:
+        n_qubits = len(custom_pauli_list[0][1])
+        ham_config: Dict[str, Any] = {
+            "name": "Custom Hamiltonian",
+            "n_qubits": n_qubits,
+            "pauli_list": custom_pauli_list,
+        }
+    else:
+        ham_config = HAMILTONIANS[hamiltonian_key]
+        n_qubits = ham_config["n_qubits"]
+
+    hamiltonian = SparsePauliOp.from_list([(p, c) for c, p in ham_config["pauli_list"]])
+    H_matrix = hamiltonian.to_matrix()
+    qc, params = build_ansatz(ansatz_key, n_qubits, reps)
+    n_params = len(params)
+
+    if not (0 <= param_x < n_params) or not (0 <= param_y < n_params):
+        raise ValueError(f"param indices must be in [0, {n_params - 1}]")
+    if param_x == param_y:
+        raise ValueError("param_x and param_y must differ")
+
+    # Run VQE to locate the optimum and capture the optimizer trajectory
+    vqe = run_vqe(
+        hamiltonian_key, ansatz_key, reps, max_iter,
+        optimizer, init_strategy, custom_pauli_list, seed,
+    )
+    iters = vqe["iterations"]
+    best = min(iters, key=lambda it: it["energy"])
+    center = np.array(best["params"], dtype=float)
+
+    axis = np.linspace(-span, span, resolution)
+    energies = np.empty((resolution, resolution), dtype=float)
+    for iy, vy in enumerate(axis):
+        for ix, vx in enumerate(axis):
+            vec = center.copy()
+            vec[param_x] = vx
+            vec[param_y] = vy
+            param_dict = {p: float(v) for p, v in zip(params, vec)}
+            sv = Statevector(qc.assign_parameters(param_dict)).data
+            energies[iy, ix] = float(np.real(np.vdot(sv, H_matrix @ sv)))
+
+    path = [
+        {
+            "x": round(float(it["params"][param_x]), 4),
+            "y": round(float(it["params"][param_y]), 4),
+            "energy": it["energy"],
+        }
+        for it in iters
+    ]
+
+    return {
+        "param_x": param_x,
+        "param_y": param_y,
+        "param_x_name": params[param_x].name,
+        "param_y_name": params[param_y].name,
+        "n_params": n_params,
+        "resolution": resolution,
+        "span": round(span, 6),
+        "axis": [round(float(a), 6) for a in axis],
+        "energies": [[round(float(e), 6) for e in row] for row in energies],
+        "e_min": round(float(energies.min()), 6),
+        "e_max": round(float(energies.max()), 6),
+        "optimum": {
+            "x": round(float(center[param_x]), 4),
+            "y": round(float(center[param_y]), 4),
+            "energy": best["energy"],
+        },
+        "path": path,
+        "hamiltonian_name": ham_config["name"],
+        "ansatz_name": ANSATZE[ansatz_key]["name"],
+        "param_names": [p.name for p in params],
+    }
+
+
 def run_vqe(
     hamiltonian_key: str,
     ansatz_key: str,
@@ -371,6 +637,7 @@ def run_vqe(
     custom_pauli_list: Optional[List[Tuple[float, str]]] = None,
     seed: int = 42,
     encoding: Optional[str] = None,
+    shots: int = 1024,
 ) -> Dict:
     if hamiltonian_key == "custom" and custom_pauli_list:
         n_qubits = len(custom_pauli_list[0][1])
@@ -454,6 +721,30 @@ def run_vqe(
 
     result = minimize(cost, x0, method=optimizer, options=opt_kwargs)
 
+    # --- Final optimal state ---
+    opt_param_dict = {p: float(v) for p, v in zip(params, result.x)}
+    final_qc = qc.assign_parameters(opt_param_dict)
+    final_sv = Statevector(final_qc)
+
+    # --- Exact reference: diagonalize H for the true ground state ---
+    H_matrix = hamiltonian.to_matrix()
+    eigvals, eigvecs = eigh(H_matrix)
+    exact_ground_energy = float(eigvals[0])
+    ground_vec = eigvecs[:, 0]
+
+    # --- Fidelity metric: overlap of the VQE state with the true ground state ---
+    fidelity = float(np.abs(np.vdot(ground_vec, final_sv.data)) ** 2)
+
+    # --- Measurement-based evaluation: sample the optimal circuit with finite shots ---
+    meas_qc = final_qc.copy()
+    meas_qc.measure_all()
+    sampler = StatevectorSampler(seed=seed)
+    job = sampler.run([(meas_qc,)], shots=shots)
+    raw_counts = job.result()[0].data.meas.get_counts()
+    measurement_counts = {
+        k: int(v) for k, v in sorted(raw_counts.items(), key=lambda kv: int(kv[0], 2))
+    }
+
     return {
         "iterations": iterations,
         "final_energy": round(float(result.fun), 6),
@@ -462,6 +753,11 @@ def run_vqe(
         "hamiltonian_name": ham_config["name"],
         "ansatz_name": ANSATZE[ansatz_key]["name"],
         "ground_truth": ham_config.get("ground_truth"),
+        "exact_ground_energy": round(exact_ground_energy, 6),
+        "fidelity": round(fidelity, 6),
+        "energy_error": round(abs(float(result.fun) - exact_ground_energy), 6),
+        "measurement_counts": measurement_counts,
+        "shots": shots,
         "units": ham_config.get("units", ""),
         "converged": bool(result.success),
         "n_gates": len(qc.data),

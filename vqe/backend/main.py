@@ -7,7 +7,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import Optional, List, Tuple
 
-from vqe_runner import run_vqe, HAMILTONIANS, ANSATZE, MOLECULAR_ENCODINGS
+from vqe_runner import (
+    run_vqe, compute_landscape, noise_sweep, barren_plateau_scan,
+    HAMILTONIANS, ANSATZE, MOLECULAR_ENCODINGS,
+)
 from ansatz_checker import check_ansatz, PROBLEM_PROFILES, ANSATZ_PROFILES
 from ibm_runner import submit_ibm_job, fetch_ibm_result
 
@@ -40,6 +43,41 @@ class VQERequest(BaseModel):
     seed: int = Field(default=42, ge=0, le=9999)
     custom_pauli_list: Optional[List[Tuple[float, str]]] = None
     encoding: Optional[str] = None  # "jw" | "bk" | "parity" | None
+    shots: int = Field(default=1024, ge=64, le=100000)
+
+
+class LandscapeRequest(BaseModel):
+    hamiltonian: str
+    ansatz: str
+    reps: int = Field(default=2, ge=1, le=4)
+    param_x: int = Field(default=0, ge=0)
+    param_y: int = Field(default=1, ge=0)
+    resolution: int = Field(default=41, ge=11, le=81)
+    optimizer: str = Field(default="COBYLA")
+    init_strategy: str = Field(default="random")
+    max_iter: int = Field(default=80, ge=10, le=150)
+    seed: int = Field(default=42, ge=0, le=9999)
+    custom_pauli_list: Optional[List[Tuple[float, str]]] = None
+
+
+class NoiseSweepRequest(BaseModel):
+    hamiltonian: str
+    ansatz: str
+    reps: int = Field(default=2, ge=1, le=4)
+    optimizer: str = Field(default="COBYLA")
+    init_strategy: str = Field(default="random")
+    max_iter: int = Field(default=80, ge=10, le=150)
+    seed: int = Field(default=42, ge=0, le=9999)
+    shots: int = Field(default=4096, ge=64, le=100000)
+    noise_levels: Optional[List[float]] = None
+    custom_pauli_list: Optional[List[Tuple[float, str]]] = None
+
+
+class BarrenRequest(BaseModel):
+    qubit_range: Optional[List[int]] = None
+    reps: Optional[int] = None
+    n_samples: int = Field(default=120, ge=20, le=500)
+    seed: int = Field(default=1, ge=0, le=9999)
 
 
 class AnsatzCheckRequest(BaseModel):
@@ -92,9 +130,54 @@ def vqe_run(req: VQERequest):
         result = run_vqe(
             req.hamiltonian, req.ansatz, req.reps, req.max_iter,
             req.optimizer, req.init_strategy,
-            req.custom_pauli_list, req.seed, req.encoding,
+            req.custom_pauli_list, req.seed, req.encoding, req.shots,
         )
         return result
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@app.post("/api/vqe/landscape")
+def vqe_landscape(req: LandscapeRequest):
+    if req.hamiltonian not in HAMILTONIANS and req.hamiltonian != "custom":
+        raise HTTPException(400, f"Unknown hamiltonian: {req.hamiltonian}")
+    if req.ansatz not in ANSATZE:
+        raise HTTPException(400, f"Unknown ansatz: {req.ansatz}")
+    if req.optimizer not in ("COBYLA", "Powell", "Nelder-Mead"):
+        raise HTTPException(400, f"Unknown optimizer: {req.optimizer}")
+    try:
+        return compute_landscape(
+            req.hamiltonian, req.ansatz, req.reps, req.param_x, req.param_y,
+            req.resolution, optimizer=req.optimizer, init_strategy=req.init_strategy,
+            max_iter=req.max_iter, custom_pauli_list=req.custom_pauli_list, seed=req.seed,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@app.post("/api/vqe/noise")
+def vqe_noise(req: NoiseSweepRequest):
+    if req.hamiltonian not in HAMILTONIANS and req.hamiltonian != "custom":
+        raise HTTPException(400, f"Unknown hamiltonian: {req.hamiltonian}")
+    if req.ansatz not in ANSATZE:
+        raise HTTPException(400, f"Unknown ansatz: {req.ansatz}")
+    if req.optimizer not in ("COBYLA", "Powell", "Nelder-Mead"):
+        raise HTTPException(400, f"Unknown optimizer: {req.optimizer}")
+    try:
+        return noise_sweep(
+            req.hamiltonian, req.ansatz, req.reps, req.optimizer, req.init_strategy,
+            req.max_iter, req.custom_pauli_list, req.seed, req.shots, req.noise_levels,
+        )
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@app.post("/api/vqe/barren")
+def vqe_barren(req: BarrenRequest):
+    try:
+        return barren_plateau_scan(req.qubit_range, req.reps, req.n_samples, req.seed)
     except Exception as e:
         raise HTTPException(500, str(e))
 
