@@ -19,8 +19,7 @@ app = FastAPI(title="VQE Explorer API")
 ALLOWED_ORIGINS = [
     "http://localhost:5173",
     "http://localhost:3000",
-    # Add your GitHub Pages URL here, e.g.:
-    # "https://yourusername.github.io",
+    "https://projects.thepathintegral.org",
 ]
 if os.environ.get("FRONTEND_URL"):
     ALLOWED_ORIGINS.append(os.environ["FRONTEND_URL"])
@@ -28,6 +27,8 @@ if os.environ.get("FRONTEND_URL"):
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
+    # Also allow the apex domain and any *.thepathintegral.org subdomain.
+    allow_origin_regex=r"https://([a-z0-9-]+\.)*thepathintegral\.org",
     allow_methods=["*"],
     allow_headers=["*"],
 )
